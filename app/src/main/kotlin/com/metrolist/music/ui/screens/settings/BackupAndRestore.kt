@@ -175,6 +175,7 @@ fun BackupAndRestore(
         )
 
         val appName = stringResource(R.string.app_name)
+        Text(stringResource(R.string.secure_backup_description), modifier = Modifier.padding(vertical = 12.dp))
         Material3SettingsGroup(
             items =
                 listOf(

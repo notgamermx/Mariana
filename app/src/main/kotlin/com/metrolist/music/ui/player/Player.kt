@@ -236,7 +236,7 @@ fun BottomSheetPlayer(
 
     val playerBackground by rememberEnumPreference(
         key = PlayerBackgroundStyleKey,
-        defaultValue = PlayerBackgroundStyle.DEFAULT,
+        defaultValue = PlayerBackgroundStyle.BLUR,
     )
     val playerButtonsStyle by rememberEnumPreference(
         key = PlayerButtonsStyleKey,
@@ -244,7 +244,7 @@ fun BottomSheetPlayer(
     )
 
     val isSystemInDarkTheme = isSystemInDarkTheme()
-    val darkTheme by rememberEnumPreference(DarkModeKey, defaultValue = DarkMode.AUTO)
+    val darkTheme by rememberEnumPreference(DarkModeKey, defaultValue = DarkMode.ON)
     val useDarkTheme =
         remember(darkTheme, isSystemInDarkTheme) {
             if (darkTheme == DarkMode.AUTO) isSystemInDarkTheme else darkTheme == DarkMode.ON
@@ -988,11 +988,12 @@ fun BottomSheetPlayer(
                             Spacer(modifier = Modifier.width(12.dp))
                         }
                     } else {
-                        Spacer(modifier = Modifier.width(0.dp))
+                        Spacer(modifier = Modifier.width(48.dp))
                     }
                 }
                 Column(
                     modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     AnimatedContent(
                         targetState = mediaMetadata.title,
@@ -1001,8 +1002,9 @@ fun BottomSheetPlayer(
                     ) { title ->
                         Text(
                             text = title,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             color = TextBackgroundColor,
@@ -1393,7 +1395,7 @@ fun BottomSheetPlayer(
                             }
                         },
                         enabled = !isListenTogetherGuest,
-                        colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme),
+                        colors = PlayerSliderColors.getSliderColors(com.metrolist.music.ui.theme.DefaultThemeColor, playerBackground, useDarkTheme),
                         modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
                     )
                 }
@@ -1419,7 +1421,7 @@ fun BottomSheetPlayer(
                                 sliderPosition = null
                             },
                             modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
-                            colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme),
+                            colors = PlayerSliderColors.getSliderColors(com.metrolist.music.ui.theme.DefaultThemeColor, playerBackground, useDarkTheme),
                             isPlaying = effectiveIsPlaying,
                         )
                     } else {
@@ -1441,7 +1443,7 @@ fun BottomSheetPlayer(
                                 }
                                 sliderPosition = null
                             },
-                            colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme),
+                            colors = PlayerSliderColors.getSliderColors(com.metrolist.music.ui.theme.DefaultThemeColor, playerBackground, useDarkTheme),
                             modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
                             isPlaying = effectiveIsPlaying,
                         )
@@ -1481,7 +1483,7 @@ fun BottomSheetPlayer(
                         track = { sliderState ->
                             PlayerSliderTrack(
                                 sliderState = sliderState,
-                                colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme),
+                                colors = PlayerSliderColors.getSliderColors(com.metrolist.music.ui.theme.DefaultThemeColor, playerBackground, useDarkTheme),
                             )
                         },
                         modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
@@ -1604,8 +1606,7 @@ fun BottomSheetPlayer(
                                     ),
                                 modifier =
                                     Modifier
-                                        .height(68.dp)
-                                        .weight(backButtonWeight),
+                                        .size(48.dp),
                             ) {
                                 Icon(
                                     painter = painterResource(R.drawable.skip_previous),
@@ -1639,13 +1640,12 @@ fun BottomSheetPlayer(
                                 interactionSource = playPauseInteractionSource,
                                 colors =
                                     IconButtonDefaults.filledIconButtonColors(
-                                        containerColor = textButtonColor,
-                                        contentColor = iconButtonColor,
+                                        containerColor = com.metrolist.music.ui.theme.DefaultThemeColor,
+                                        contentColor = Color(0xFF151908),
                                     ),
                                 modifier =
                                     Modifier
-                                        .height(68.dp)
-                                        .weight(playPauseWeight)
+                                        .size(64.dp)
                                         .focusRequester(focusRequester),
                             ) {
                                 Row(
@@ -1669,16 +1669,7 @@ fun BottomSheetPlayer(
                                             },
                                         modifier = Modifier.size(32.dp),
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text =
-                                            if (isListenTogetherGuest) {
-                                                if (isMuted) stringResource(R.string.unmute) else stringResource(R.string.mute)
-                                            } else {
-                                                if (effectiveIsPlaying) stringResource(R.string.player_pause) else stringResource(R.string.play)
-                                            },
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
+
                                 }
                             }
 
@@ -1696,8 +1687,7 @@ fun BottomSheetPlayer(
                                     ),
                                 modifier =
                                     Modifier
-                                        .height(68.dp)
-                                        .weight(nextButtonWeight),
+                                        .size(48.dp),
                             ) {
                                 Icon(
                                     painter = painterResource(R.drawable.skip_next),

@@ -253,19 +253,15 @@ fun AboutScreen(
                     .padding(24.dp)
             ) {
                 Image(
-                    painter = painterResource(R.drawable.small_icon),
-                    contentDescription = stringResource(R.string.metrolist),
-                    colorFilter = ColorFilter.tint(
-                        color = MaterialTheme.colorScheme.primary,
-                        blendMode = BlendMode.SrcIn,
-                    ),
+                    painter = painterResource(R.drawable.personal_music_icon),
+                    contentDescription = stringResource(R.string.app_name),
                     modifier = Modifier.size(64.dp)
                 )
         
                 Spacer(Modifier.width(20.dp))
         
                 Column {
-                    val metrolistName = stringResource(R.string.metrolist)
+                    val metrolistName = stringResource(R.string.app_name)
                         .lowercase(Locale.getDefault())
                         .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 

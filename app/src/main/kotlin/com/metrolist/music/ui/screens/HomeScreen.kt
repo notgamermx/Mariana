@@ -137,6 +137,10 @@ import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.ui.component.AlbumGridItem
 import com.metrolist.music.ui.component.ArtistGridItem
 import com.metrolist.music.ui.component.ChipsRow
+import com.metrolist.music.ui.component.HomeGreeting
+import com.metrolist.music.ui.component.RecommendationPanel
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.Lifecycle
 import com.metrolist.music.ui.component.HideOnScrollFAB
 import com.metrolist.music.ui.component.LocalBottomSheetPageState
 import com.metrolist.music.ui.component.LocalMenuState
@@ -508,138 +512,22 @@ fun DailyDiscoverCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val navController = LocalNavController.current
-    val database = LocalDatabase.current
-    val playCount by database.getLifetimePlayCount(dailyDiscover.recommendation.id).collectAsStateWithLifecycle(initialValue = 0)
     val menuState = LocalMenuState.current
-    val haptic = LocalHapticFeedback.current
     val artistNameAliases = LocalArtistNameAliases.current
-
     val song = dailyDiscover.recommendation as? SongItem
-    val playsString = stringResource(R.string.plays)
-
-    Card(
-        modifier =
-            modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(28.dp))
-                .combinedClickable(
-                    onClick = onClick,
-                    onLongClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (song != null) {
-                            menuState.show {
-                                YouTubeSongMenu(
-                                    song = song,
-                                    onDismiss = { menuState.dismiss() },
-                                )
-                            }
-                        }
-                    },
-                ),
-        colors =
-            CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
-        shape = RoundedCornerShape(28.dp),
-    ) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            AsyncImage(
-                model =
-                    ImageRequest
-                        .Builder(LocalContext.current)
-                        .data(dailyDiscover.recommendation.thumbnail?.resize(1080, 1080))
-                        .crossfade(true)
-                        .build(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier =
-                    Modifier
-                        .fillMaxSize(),
-            )
-
-            if (maxWidth > 200.dp) {
-                Box(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .background(
-                                brush =
-                                    Brush.verticalGradient(
-                                        colors =
-                                            listOf(
-                                                Color.Black.copy(alpha = 0.3f),
-                                                Color.Transparent,
-                                                Color.Black.copy(alpha = 0.6f),
-                                                Color.Black.copy(alpha = 0.9f),
-                                            ),
-                                    ),
-                            ),
-                )
-
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                    verticalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Column {
-                        Text(
-                            text = dailyDiscover.recommendation.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                        )
-                        Text(
-                            text =
-                                buildString {
-                                    append(
-                                        (dailyDiscover.recommendation as? SongItem)
-                                            ?.artists
-                                            ?.joinToArtistString(" ${stringResource(R.string.and)} ") {
-                                                ArtistNameAliases.resolve(artistNameAliases, it.id, it.name)
-                                            }.orEmpty(),
-                                    )
-                                    if (playCount > 0) {
-                                        append(" | $playCount $playsString")
-                                    }
-                                },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.7f),
-                        )
-                    }
-
-                    val messages =
-                        listOf(
-                            R.string.daily_discover_sounds_like,
-                            R.string.daily_discover_because_you_listen_to,
-                            R.string.daily_discover_similar_to,
-                            R.string.daily_discover_based_on,
-                            R.string.daily_discover_for_fans_of,
-                        )
-                    val messageRes =
-                        remember(dailyDiscover.seed.id) {
-                            messages[kotlin.math.abs(dailyDiscover.seed.id.hashCode()) % messages.size]
-                        }
-
-                    Text(
-                        text =
-                            stringResource(
-                                messageRes,
-                                "${dailyDiscover.seed.title} • ${dailyDiscover.seed.artists.joinToArtistString(" ${stringResource(R.string.and)} ") {
-                                    ArtistNameAliases.resolve(artistNameAliases, it.id, it.name)
-                                }}",
-                            ),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                        color = Color.White.copy(alpha = 0.6f),
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-    }
+    val artists = song?.artists?.joinToArtistString(" ${stringResource(R.string.and)} ") {
+        ArtistNameAliases.resolve(artistNameAliases, it.id, it.name)
+    }.orEmpty()
+    com.metrolist.music.ui.component.DiscoveryCard(
+        title = dailyDiscover.recommendation.title,
+        artists = artists,
+        artwork = dailyDiscover.recommendation.thumbnail?.resize(600, 600),
+        onPlay = onClick,
+        onMore = if (song == null) null else {
+            { menuState.show { YouTubeSongMenu(song = song, onDismiss = menuState::dismiss) } }
+        },
+        modifier = modifier,
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -668,6 +556,9 @@ fun HomeScreen(
     val homePage by viewModel.homePage.collectAsStateWithLifecycle()
     val explorePage by viewModel.explorePage.collectAsStateWithLifecycle()
     val dailyDiscover by viewModel.dailyDiscover.collectAsStateWithLifecycle()
+    val recommendationPreferences by viewModel.recommendationPreferences.collectAsStateWithLifecycle()
+    val recommendationStatus by viewModel.recommendationStatus.collectAsStateWithLifecycle()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshRecommendations(force = false) }
     val communityPlaylists by viewModel.communityPlaylists.collectAsStateWithLifecycle()
 
     val allLocalItems by viewModel.allLocalItems.collectAsStateWithLifecycle()
@@ -1189,12 +1080,31 @@ fun HomeScreen(
                 state = lazylistState,
                 contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues(),
             ) {
+                item(key = "my_music_greeting") {
+                    HomeGreeting(accountName, accountImageUrl,
+                        onAccount = { navController.navigate("account") },
+                        onSearch = { navController.navigate("search_input") },
+                        onLikes = { navController.navigate("auto_playlist/liked") })
+                }
+                item(key = "daily_mix_controls") {
+                    val mixTitle = stringResource(R.string.rec_daily)
+                    RecommendationPanel(recommendationPreferences, recommendationStatus,
+                        canPlay = !dailyDiscover.isNullOrEmpty() && !isListenTogetherGuest,
+                        onPlay = {
+                            val tracks = dailyDiscover.orEmpty().map { it.recommendation.toMediaItem() }
+                            if (tracks.isNotEmpty() && !isListenTogetherGuest)
+                                playerConnection.playQueue(ListQueue(title = mixTitle, items = tracks))
+                        },
+                        onRefresh = { viewModel.refreshRecommendations() },
+                        onChoice = viewModel::setRecommendationChoice,
+                        onReset = viewModel::resetRecommendationChoices)
+                }
                 item {
                     ChipsRow(
-                        chips = homePage?.chips?.map { it to it.title } ?: emptyList(),
+                        chips = listOf(null to stringResource(R.string.design_filter_all)) + (homePage?.chips?.map { it to it.title } ?: emptyList()),
                         currentValue = selectedChip,
                         onValueUpdate = {
-                            viewModel.toggleChip(it)
+                            if (it != null) viewModel.toggleChip(it) else selectedChip?.let(viewModel::toggleChip)
                         },
                     )
                 }
@@ -1909,7 +1819,7 @@ fun HomeScreen(
                         HomeSection.DailyDiscover -> {
                             dailyDiscover?.takeIf { it.isNotEmpty() }?.let { discoverList ->
                                 item(key = "daily_discover_title") {
-                                    val title = stringResource(R.string.your_daily_discover)
+                                    val title = stringResource(R.string.rec_daily)
                                     NavigationTitle(
                                         title = title,
                                         onPlayAllClick = {
@@ -1935,7 +1845,7 @@ fun HomeScreen(
                                         modifier =
                                             Modifier
                                                 .fillMaxWidth()
-                                                .height(340.dp)
+                                                .height(208.dp)
                                                 .padding(horizontal = 16.dp),
                                         contentAlignment = Alignment.Center,
                                     ) {
@@ -1947,7 +1857,7 @@ fun HomeScreen(
                                             modifier =
                                                 Modifier
                                                     .fillMaxWidth()
-                                                    .height(320.dp),
+                                                    .height(184.dp),
                                         ) { i ->
                                             val item = discoverList[i]
                                             DailyDiscoverCard(

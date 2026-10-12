@@ -27,22 +27,29 @@ import com.metrolist.music.utils.rememberEnumPreference
 fun LibraryScreen() {
     val navController = LocalNavController.current
     var filterType by rememberEnumPreference(ChipSortTypeKey, LibraryFilter.LIBRARY)
-    var libraryViewType by rememberEnumPreference(AlbumViewTypeKey, LibraryViewType.GRID)
-    var playlistViewType by rememberEnumPreference(PlaylistViewTypeKey, LibraryViewType.GRID)
+    var libraryViewType by rememberEnumPreference(AlbumViewTypeKey, LibraryViewType.LIST)
+    var playlistViewType by rememberEnumPreference(PlaylistViewTypeKey, LibraryViewType.LIST)
 
     val filterContent = @Composable {
         Row {
             ChipsRow(
                 chips = listOf(
-                    LibraryFilter.PLAYLISTS to stringResource(R.string.filter_playlists),
-                    LibraryFilter.SONGS to stringResource(R.string.filter_songs),
-                    LibraryFilter.ALBUMS to stringResource(R.string.filter_albums),
-                    LibraryFilter.ARTISTS to stringResource(R.string.filter_artists),
-                    LibraryFilter.PODCASTS to stringResource(R.string.filter_podcasts),
+                    LibraryFilter.LIBRARY.name to stringResource(R.string.design_filter_all),
+                    LibraryFilter.PLAYLISTS.name to stringResource(R.string.filter_playlists),
+                    "liked" to stringResource(R.string.design_liked_songs),
+                    "downloaded" to stringResource(R.string.design_downloads),
+                    LibraryFilter.SONGS.name to stringResource(R.string.filter_songs),
+                    LibraryFilter.ALBUMS.name to stringResource(R.string.filter_albums),
+                    LibraryFilter.ARTISTS.name to stringResource(R.string.filter_artists),
+                    LibraryFilter.PODCASTS.name to stringResource(R.string.filter_podcasts),
                 ),
-                currentValue = filterType,
+                currentValue = filterType.name,
                 onValueUpdate = {
-                    filterType = if (filterType == it) LibraryFilter.LIBRARY else it
+                    if (it == "liked" || it == "downloaded") navController.navigate("auto_playlist/$it")
+                    else {
+                        val next = LibraryFilter.valueOf(it)
+                        filterType = if (filterType == next) LibraryFilter.LIBRARY else next
+                    }
                 },
                 modifier = Modifier.weight(1f),
             )

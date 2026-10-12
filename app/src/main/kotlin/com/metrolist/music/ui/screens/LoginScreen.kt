@@ -13,6 +13,8 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebSettings
+import com.metrolist.music.utils.LoginUrlPolicy
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -312,20 +314,7 @@ fun LoginScreen(
                                 view: WebView,
                                 request: WebResourceRequest,
                             ): Boolean {
-                                val scheme = request.url.scheme
-                                if (scheme == "http" || scheme == "https") return false
-
-                                if (scheme == "intent") {
-                                    runCatching {
-                                        Intent.parseUri(request.url.toString(), Intent.URI_INTENT_SCHEME)
-                                            .apply {
-                                                addCategory(Intent.CATEGORY_BROWSABLE)
-                                                component = null
-                                                selector = null
-                                            }.let(context::startActivity)
-                                    }
-                                }
-                                return true
+                                return !LoginUrlPolicy.allows(request.url.toString())
                             }
 
                             override fun onPageFinished(
@@ -341,6 +330,10 @@ fun LoginScreen(
                     settings.apply {
                         javaScriptEnabled = true
                         domStorageEnabled = true
+                        allowFileAccess = false
+                        allowContentAccess = false
+                        mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                        safeBrowsingEnabled = true
                         setSupportZoom(true)
                         builtInZoomControls = true
                         displayZoomControls = false

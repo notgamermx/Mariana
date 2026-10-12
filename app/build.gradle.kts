@@ -7,7 +7,7 @@ if (localPropertiesFile.exists()) {
     localProperties.load(localPropertiesFile.inputStream())
 }
 
-val baseApplicationId = "com.metrolist.music"
+val baseApplicationId = "app.personal.mymusic"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }
 val appNameOverride = System.getenv("METROLIST_APP_NAME")?.takeIf { it.isNotBlank() }
 val buildCommit =
@@ -36,6 +36,13 @@ android {
     namespace = "com.metrolist.music"
     compileSdk = 37
 
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all { test ->
+            test.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
+        }
+    }
+
     defaultConfig {
         applicationId = applicationIdOverride ?: baseApplicationId
         minSdk = 26
@@ -45,7 +52,8 @@ android {
         val baseVersionName = requireNotNull(versionName)
         buildConfigField("String", "BASE_VERSION_NAME", "\"$baseVersionName\"")
         buildCommit?.let { versionName = "$baseVersionName+$it" }
-        resValue("string", "app_name", appNameOverride ?: "Metrolist")
+        resValue("string", "app_name", appNameOverride ?: "My Music")
+        resValue("string", "shortcut_target_package", applicationIdOverride ?: baseApplicationId)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -71,14 +79,14 @@ android {
             dimension = "variant"
             isDefault = true
             buildConfigField("Boolean", "CAST_AVAILABLE", "false")
-            buildConfigField("Boolean", "UPDATER_AVAILABLE", "true")
+            buildConfigField("Boolean", "UPDATER_AVAILABLE", "false")
         }
 
         // GMS - Updater and gcast
         create("gms") {
             dimension = "variant"
             buildConfigField("Boolean", "CAST_AVAILABLE", "true")
-            buildConfigField("Boolean", "UPDATER_AVAILABLE", "true")
+            buildConfigField("Boolean", "UPDATER_AVAILABLE", "false")
         }
 
         // IzzyOnDroid - no gcast, no updater - the ONLY F-droid compliant build
@@ -130,10 +138,11 @@ android {
         debug {
             if (applicationIdOverride == null) {
                 applicationIdSuffix = ".debug"
+                resValue("string", "shortcut_target_package", "$baseApplicationId.debug")
             }
             isDebuggable = true
             if (appNameOverride == null) {
-                resValue("string", "app_name", "Metrolist Debug")
+                resValue("string", "app_name", "My Music")
             }
             signingConfig =
                 if (workflowDebugKeystoreFile != null) {
@@ -143,6 +152,12 @@ android {
                 } else {
                     signingConfigs.getByName("debug")
                 }
+        }
+        create("hardened") {
+            initWith(getByName("debug"))
+            isDebuggable = false
+            applicationIdSuffix = null
+            matchingFallbacks += listOf("debug")
         }
     }
 

@@ -65,12 +65,28 @@ import timber.log.Timber
 import java.time.LocalDate
 import java.time.LocalDateTime
 import javax.inject.Inject
+import androidx.datastore.preferences.core.Preferences
+import com.metrolist.music.utils.RecommendationCache
+import com.metrolist.music.utils.RecommendationTrack
+import com.metrolist.music.utils.RecommendationSnapshot
+import com.metrolist.music.utils.RecommendationPreferences
+import com.metrolist.music.utils.RecommendationChoices
+import com.metrolist.music.utils.RecommendationGenreKey
+import com.metrolist.music.utils.RecommendationLanguageKey
+import com.metrolist.music.utils.RecommendationStyleKey
+import com.metrolist.music.utils.RecommendationStatus
+import com.metrolist.music.utils.rankRecommendations
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 import kotlin.random.Random
 
 data class DailyDiscoverItem(
-    val seed: Song,
-    val recommendation: YTItem,
-    val relatedEndpoint: BrowseEndpoint?
+    val recommendation: SongItem
 )
 
 data class CommunityPlaylistItem(
@@ -107,6 +123,12 @@ class HomeViewModel @Inject constructor(
 
     val quickPicks = MutableStateFlow<List<Song>?>(null)
     val dailyDiscover = MutableStateFlow<List<DailyDiscoverItem>?>(null)
+    val recommendationPreferences = MutableStateFlow(RecommendationPreferences())
+    val recommendationStatus = MutableStateFlow(RecommendationStatus.LOADING)
+    private val recommendationCache = RecommendationCache(File(context.cacheDir, "daily-recommendations"))
+    private data class MixRefresh(val nonce: Int = 0, val force: Boolean = false)
+    private val mixRefresh = MutableStateFlow(MixRefresh())
+    private data class MixInput(val prefs: Preferences, val liked: List<Song>, val recent: List<Song>, val refresh: MixRefresh)
     val forgottenFavorites = MutableStateFlow<List<Song>?>(null)
     val keepListening = MutableStateFlow<List<LocalItem>?>(null)
     val similarRecommendations = MutableStateFlow<List<SimilarRecommendation>?>(null)
@@ -271,52 +293,128 @@ class HomeViewModel @Inject constructor(
             }
         }
     }
-    private suspend fun getDailyDiscover() {
-        val hideVideoSongs = context.dataStore.get(HideVideoSongsKey, false)
-        val likedSongs = database.likedSongsByCreateDateAsc().first()
-        if (likedSongs.isEmpty()) return
+    fun refreshRecommendations(force: Boolean = true) {
+        mixRefresh.value = MixRefresh(mixRefresh.value.nonce + 1, force)
+    }
 
-        val seeds = likedSongs.shuffled().distinctBy { it.id }.take(5)
-        
-        // Use a synchronized list to collect results safely from concurrent coroutines
-        val items = java.util.Collections.synchronizedList(mutableListOf<DailyDiscoverItem>())
+    fun setRecommendationChoice(key: Preferences.Key<String>, value: String) {
+        val choices = when (key) {
+            RecommendationGenreKey -> RecommendationChoices.genres
+            RecommendationLanguageKey -> RecommendationChoices.languages
+            RecommendationStyleKey -> RecommendationChoices.styles
+            else -> return
+        }
+        if (choices.none { it.first == value }) return
+        viewModelScope.launch(Dispatchers.IO) { context.safeDataStoreEdit { it[key] = value } }
+    }
 
-        kotlinx.coroutines.coroutineScope {
-            seeds.map { seed ->
-                launch(Dispatchers.IO) {
-                    val endpoint = YouTube.next(WatchEndpoint(videoId = seed.id)).getOrNull()?.relatedEndpoint
-                    if (endpoint != null) {
-                        YouTube.related(endpoint).onSuccess { page ->
-                            val recommendations = page.songs
-                                .filter { item ->
-                                    if (hideVideoSongs && item.isVideoSong) return@filter false
-                                    if (item.explicit) return@filter false
-                                    true
-                                }
-                                .shuffled()
+    fun resetRecommendationChoices() {
+        viewModelScope.launch(Dispatchers.IO) {
+            context.safeDataStoreEdit {
+                it.remove(RecommendationGenreKey)
+                it.remove(RecommendationLanguageKey)
+                it.remove(RecommendationStyleKey)
+            }
+        }
+    }
 
-                            // Simple check to avoid immediate duplicate of seed
-                            val recommendation = recommendations.firstOrNull { rec ->
-                                rec.id != seed.id
-                            }
-
-                            if (recommendation != null) {
-                                items.add(
-                                    DailyDiscoverItem(
-                                        seed = seed,
-                                        recommendation = recommendation,
-                                        relatedEndpoint = endpoint
-                                    )
-                                )
-                            }
-                        }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun observeRecommendations() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val recentSongs = mixRefresh.flatMapLatest {
+                database.mostPlayedSongs(LocalDateTime.now().minusDays(30), limit = 20,
+                    toTimeStamp = LocalDateTime.now().plusDays(1))
+            }
+            combine(context.dataStore.data, database.likedSongsByCreateDateAsc(), recentSongs,
+                mixRefresh) { prefs, liked, recent, refresh -> MixInput(prefs, liked, recent, refresh) }
+                .distinctUntilChangedBy { input ->
+                    listOf(RecommendationPreferences.read(input.prefs), input.prefs[HideExplicitKey],
+                        input.prefs[HideVideoSongsKey], input.prefs[HideYoutubeShortsKey],
+                        input.liked.map { it.id }.sorted(), input.recent.map { it.id }, input.refresh)
+                }.collectLatest { input ->
+                    try { getDailyDiscover(input) }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (error: Exception) {
+                        recommendationStatus.value = if (dailyDiscover.value.isNullOrEmpty()) RecommendationStatus.FAILED else RecommendationStatus.CACHED
+                        reportException(error)
                     }
                 }
-            }.forEach { it.join() }
         }
-        
-        // Final deduplication just in case multiple seeds recommended the same song
-        dailyDiscover.value = items.toList().distinctBy { it.recommendation.id }.shuffled()
+    }
+
+    private suspend fun getDailyDiscover(input: MixInput) {
+        val choices = RecommendationPreferences.read(input.prefs)
+        recommendationPreferences.value = choices
+        val hideExplicit = input.prefs[HideExplicitKey] ?: false
+        val hideVideos = input.prefs[HideVideoSongsKey] ?: false
+        val hideShorts = input.prefs[HideYoutubeShortsKey] ?: false
+        val seeds = (input.liked.sortedByDescending { it.song.likedDate }.take(20) + input.recent)
+            .distinctBy { it.id }.filterNot { it.song.isLocal || it.song.isEpisode }.take(30)
+        val artists = seeds.flatMap { it.artists }.map { it.name.lowercase() }.toSet()
+        val key = RecommendationCache.key(listOf("v1", choices.genre, choices.language, choices.style,
+            hideExplicit.toString(), hideVideos.toString(), hideShorts.toString()) +
+            seeds.map { it.id }.sorted() + input.liked.map { it.id }.sorted() + artists.sorted())
+        val today = LocalDate.now()
+        val cached = recommendationCache.read(key)
+        // Always replace the previous filter's mix, even if this selection has no saved results.
+        dailyDiscover.value = cached?.tracks?.map { DailyDiscoverItem(it.toSong()) }.orEmpty()
+        if (cached?.isFresh(today, System.currentTimeMillis()) == true && !input.refresh.force) {
+            recommendationStatus.value = if (networkConnectivity.networkStatus.value) RecommendationStatus.CACHED else RecommendationStatus.OFFLINE
+            return
+        }
+        if (!networkConnectivity.networkStatus.value) {
+            if (cached != null) recommendationStatus.value = RecommendationStatus.OFFLINE
+            else showLocalMix(input, choices, hideExplicit, hideVideos)
+            return
+        }
+        recommendationStatus.value = RecommendationStatus.LOADING
+        val candidates = mutableListOf<SongItem>()
+        withTimeoutOrNull(35_000L) {
+            if (choices.isFiltered || seeds.isEmpty()) {
+                val query = if (choices.isFiltered) choices.searchQuery() else "new music"
+                YouTube.search(query, YouTube.SearchFilter.FILTER_SONG, recordSearchHistory = false)
+                    .getOrNull()?.items?.filterIsInstance<SongItem>()?.let(candidates::addAll)
+                currentCoroutineContext().ensureActive()
+                if (choices.isFiltered && seeds.isNotEmpty()) {
+                    val artist = seeds.first().artists.firstOrNull()?.name
+                    if (artist != null) YouTube.search("$query $artist", YouTube.SearchFilter.FILTER_SONG, recordSearchHistory = false)
+                        .getOrNull()?.items?.filterIsInstance<SongItem>()?.let(candidates::addAll)
+                }
+            } else {
+                val dailySeeds = (seeds.take(2) + input.recent.filterNot { it.song.isLocal || it.song.isEpisode }.take(2) +
+                    seeds.shuffled(Random(today.toEpochDay())).take(2)).distinctBy { it.id }.take(4)
+                for (seed in dailySeeds) {
+                    currentCoroutineContext().ensureActive()
+                    val endpoint = YouTube.next(WatchEndpoint(videoId = seed.id)).getOrNull()?.relatedEndpoint
+                    currentCoroutineContext().ensureActive()
+                    if (endpoint != null) YouTube.related(endpoint).getOrNull()?.songs?.let(candidates::addAll)
+                }
+            }
+        }
+        currentCoroutineContext().ensureActive()
+        val songs = rankRecommendations(candidates.filterExplicit(hideExplicit).filterVideoSongs(hideVideos)
+            .filterYoutubeShorts(hideShorts), artists, input.liked.map { it.id }.toSet() + seeds.map { it.id }, today)
+            .filter { it.title.length in 1..1000 && it.id.matches(Regex("[A-Za-z0-9_-]{1,128}")) &&
+                it.artists.size <= 20 && it.artists.all { artist -> artist.name.length <= 1000 && (artist.id?.length ?: 0) <= 128 } &&
+                it.thumbnail.length <= 4096 && (it.thumbnail.isEmpty() || it.thumbnail.startsWith("https://")) }
+        if (songs.isNotEmpty()) {
+            dailyDiscover.value = songs.map { DailyDiscoverItem(it) }
+            val saved = runCatching { recommendationCache.write(RecommendationSnapshot(key, today.toString(), System.currentTimeMillis(), songs.map(RecommendationTrack::from))) }
+                .onFailure { reportException(it) }
+            recommendationStatus.value = if (saved.isSuccess) RecommendationStatus.SAVED else RecommendationStatus.LIVE
+        } else if (cached != null) {
+            recommendationStatus.value = RecommendationStatus.CACHED
+        } else showLocalMix(input, choices, hideExplicit, hideVideos)
+    }
+
+    private fun showLocalMix(input: MixInput, choices: RecommendationPreferences, hideExplicit: Boolean, hideVideos: Boolean) {
+        val local = if (choices.isFiltered) emptyList() else (input.recent + input.liked.sortedByDescending { it.song.likedDate })
+            .distinctBy { it.id }.filterNot { it.song.isLocal || it.song.isEpisode || (hideExplicit && it.song.explicit) || (hideVideos && it.song.isVideo) }
+            .take(24).map { song -> SongItem(id = song.id, title = song.title,
+                artists = song.artists.map { Artist(it.name, it.id) }, thumbnail = song.thumbnailUrl ?: "", explicit = song.song.explicit) }
+        dailyDiscover.value = local.map { DailyDiscoverItem(it) }
+        recommendationStatus.value = if (local.isNotEmpty()) RecommendationStatus.LIBRARY
+            else if (choices.isFiltered) RecommendationStatus.FAILED else RecommendationStatus.EMPTY
     }
 
     private suspend fun getQuickPicks() {
@@ -491,7 +589,7 @@ class HomeViewModel @Inject constructor(
         isLoading.value = false
 
         // Phase 2: Heavy multi-request operations — run in background without blocking the UI.
-        viewModelScope.launch(Dispatchers.IO) { getDailyDiscover() }
+        refreshRecommendations(force = false)
 
         viewModelScope.launch(Dispatchers.IO) { getCommunityPlaylists() }
 
@@ -684,6 +782,7 @@ class HomeViewModel @Inject constructor(
 
     fun refresh() {
         if (isRefreshing.value) return
+        refreshRecommendations(force = false)
         isRefreshing.value = true
         viewModelScope.launch(Dispatchers.IO) {
             // If a chip is selected, reload the chip's content instead of the default home
@@ -718,6 +817,7 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
+        observeRecommendations()
         // Run sync in separate coroutine with cooldown to avoid blocking UI
         viewModelScope.launch(Dispatchers.IO) {
             syncUtils.tryAutoSync()

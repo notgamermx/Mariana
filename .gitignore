@@ -117,3 +117,16 @@ app/src/main/cpp/coverart/
 .cortexkit
 .mcp.json
 *.har
+
+# Personal fork: never publish local credentials, signing material or generated data
+*.keystore
+*.jks
+*.p12
+*.pfx
+.env*
+!*.env.example
+outputs/
+work/
+Spotify-Liked-Songs*
+*spotify-token*
+*spotify_token*

@@ -1,0 +1,36 @@
+Mariana
+
+This repository contains the My Music personal Android app, based on
+MetrolistGroup/Metrolist. It preserves the upstream GPL-3.0 license, copyright
+notices, contributors, and project credits.
+
+Upstream: https://github.com/MetrolistGroup/Metrolist
+Base commit: 76fa5a78b5110674442884b6f21c0cef51cdb782
+Fork: https://github.com/notgamermx/Mariana
+
+Personal additions
+- Spotify liked-library JSON/CSV import and optional OAuth PKCE import
+- Dark lime/lavender interface and floating navigation
+- Daily recommendation metadata cache based on likes and recent listening
+- Genre, language and mood discovery choices
+- Personal non-debuggable build, restricted login/network policy, bounded
+  imports and backups which omit account settings
+
+Build on Windows with JDK 21 and a compatible Android SDK
+./Build-MyMusic.ps1 -JavaPath <JDK21 path> -SdkPath <Android SDK path> -RunTests -Hardened
+
+The build script generates a local signing key when one is missing. Keep it
+private and retain it for updates of APKs you build. The original personal
+APK signing key is deliberately not published, so fresh builds use a
+different certificate from previously distributed personal APKs.
+No APKs, machine-specific SDK paths, login tokens or personal music exports
+are included in this repository.
+
+The current source passed 250 unit tests and both debug/hardened APK builds.
+Physical-device and live music-provider testing remain pending. Cached lists
+do not download audio. Discovery filters are approximate search hints.
+
+To keep a local checkout connected to upstream
+git remote add upstream https://github.com/MetrolistGroup/Metrolist.git
+git fetch upstream
+Review upstream changes before merging them into the personal fork.

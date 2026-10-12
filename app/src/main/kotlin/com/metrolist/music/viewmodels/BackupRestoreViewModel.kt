@@ -43,6 +43,7 @@ import com.metrolist.music.playback.MusicService.Companion.PERSISTENT_PLAYER_STA
 import com.metrolist.music.playback.MusicService.Companion.PERSISTENT_QUEUE_FILE
 import com.metrolist.music.utils.reportException
 import com.metrolist.music.utils.ArtistNameAliases
+import com.metrolist.music.utils.BoundedImport
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -82,11 +83,6 @@ class BackupRestoreViewModel @Inject constructor(
         runCatching {
             context.applicationContext.contentResolver.openOutputStream(uri)?.use {
                 it.buffered().zipOutputStream().use { outputStream ->
-                    (context.filesDir / "datastore" / SETTINGS_FILENAME).inputStream().buffered()
-                        .use { inputStream ->
-                            outputStream.putNextEntry(ZipEntry(SETTINGS_FILENAME))
-                            inputStream.copyTo(outputStream)
-                        }
                     outputStream.putNextEntry(ZipEntry(ArtistNameAliases.BACKUP_FILENAME))
                     outputStream.write(ArtistNameAliases.serialize().encodeToByteArray())
                     runBlocking(Dispatchers.IO) {
@@ -145,36 +141,37 @@ class BackupRestoreViewModel @Inject constructor(
                 tempSettings.delete()
 
                 var foundDb = false
-                var foundSettings = false
                 var restoredArtistNameAliases: Map<String, String>? = null
 
                 context.applicationContext.contentResolver.openInputStream(uri)?.use { raw ->
                     raw.zipInputStream().use { inputStream ->
-                        var entry = tryOrNull { inputStream.nextEntry }
+                        val seenEntries = mutableSetOf<String>()
+                        var entry = inputStream.nextEntry
                         while (entry != null) {
+                            require(seenEntries.add(entry.name) && seenEntries.size <= 5) { "Duplicate or excessive backup entries" }
                             Timber.tag("RESTORE").i("Found zip entry: ${entry.name}")
                             when (entry.name) {
                                 SETTINGS_FILENAME -> {
-                                    foundSettings = true
-                                    tempSettings.outputStream().use { it.write(inputStream.readBytes()) }
+                                    BoundedImport.copy(inputStream, null, 4L * 1024 * 1024)
                                 }
                                 ArtistNameAliases.BACKUP_FILENAME -> {
-                                    restoredArtistNameAliases =
-                                        ArtistNameAliases.deserialize(inputStream.readBytes().decodeToString())
+                                    val bytes = java.io.ByteArrayOutputStream()
+                                    BoundedImport.copy(inputStream, bytes, 4L * 1024 * 1024)
+                                    restoredArtistNameAliases = ArtistNameAliases.deserialize(bytes.toString("UTF-8"))
                                 }
                                 InternalDatabase.DB_NAME -> {
                                     foundDb = true
-                                    FileOutputStream(restoreDbPath).use { inputStream.copyTo(it) }
+                                    FileOutputStream(restoreDbPath).use { BoundedImport.copy(inputStream, it, 512L * 1024 * 1024) }
                                 }
                                 "${InternalDatabase.DB_NAME}-wal" -> {
-                                    // Skip WAL — we'll open cleanly
+                                    BoundedImport.copy(inputStream, null, 128L * 1024 * 1024)
                                 }
                                 "${InternalDatabase.DB_NAME}-shm" -> {
-                                    // Skip SHM — we'll open cleanly
+                                    BoundedImport.copy(inputStream, null, 128L * 1024 * 1024)
                                 }
-                                else -> Timber.tag("RESTORE").i("Skipping unexpected entry: ${entry.name}")
+                                else -> error("Unexpected backup entry")
                             }
-                            entry = tryOrNull { inputStream.nextEntry }
+                            entry = inputStream.nextEntry
                         }
                     }
                 } ?: run {
@@ -182,7 +179,7 @@ class BackupRestoreViewModel @Inject constructor(
                     return@launch
                 }
 
-                if (!foundDb && !foundSettings) {
+                if (!foundDb) {
                     Timber.tag("RESTORE").w("No expected entries found in archive")
                     kotlinx.coroutines.withContext(Dispatchers.Main) {
                         Toast.makeText(context, R.string.restore_failed, Toast.LENGTH_SHORT).show()
@@ -193,6 +190,12 @@ class BackupRestoreViewModel @Inject constructor(
                 var backupDbVersion = -1
                 var currentDbVersion = -1
                 if (foundDb) {
+                    android.database.sqlite.SQLiteDatabase.openDatabase(restoreDbPath, null,
+                        android.database.sqlite.SQLiteDatabase.OPEN_READONLY).use { restoredDb ->
+                        restoredDb.rawQuery("PRAGMA quick_check", null).use { result ->
+                            check(result.moveToFirst() && result.getString(0) == "ok") { "Corrupt backup database" }
+                        }
+                    }
                     // Read backup DB version using raw SQLite (no Room involvement)
                     backupDbVersion = InternalDatabase.readDatabaseVersion(restoreDbPath)
                     if (backupDbVersion <= 0) {
@@ -265,57 +268,6 @@ class BackupRestoreViewModel @Inject constructor(
                 }
 
                 if (dbSwapSucceeded) {
-                    if (foundSettings) {
-                        // If auth data needs clearing, strip auth keys from the temp file
-                        // before copying to actualSettings. This avoids issues with
-                        // DataStore's in-memory cache being stale after a raw file swap.
-                        if (clearAuthData) {
-                            runCatching {
-                                // Open a temporary DataStore for the staged settings file
-                                // to remove auth keys before promoting it to the live path.
-                                val settingsBaseName = SETTINGS_FILENAME.removeSuffix(".preferences_pb")
-                                val stageSettings = File(
-                                    context.filesDir,
-                                    "datastore/${settingsBaseName}.stage.preferences_pb",
-                                )
-                                stageSettings.delete()
-                                tempSettings.copyTo(stageSettings, overwrite = true)
-
-                                val stageDataStore =
-                                    androidx.datastore.preferences.core.PreferenceDataStoreFactory.create {
-                                        stageSettings
-                                    }
-                                kotlinx.coroutines.runBlocking {
-                                    stageDataStore.edit { prefs ->
-                                        prefs.remove(InnerTubeCookieKey)
-                                        prefs.remove(VisitorDataKey)
-                                        prefs.remove(DataSyncIdKey)
-                                        prefs.remove(InnerTubeAuthUserKey)
-                                    }
-                                }
-
-                                val actualSettings = File(
-                                    context.filesDir,
-                                    "datastore/$SETTINGS_FILENAME",
-                                )
-                                stageSettings.copyTo(actualSettings, overwrite = true)
-                                stageSettings.delete()
-                            }.onFailure {
-                                Timber.tag("RESTORE").e(it, "Failed to clear auth from restored settings")
-                                kotlinx.coroutines.withContext(Dispatchers.Main) {
-                                    Toast.makeText(context, R.string.restore_failed, Toast.LENGTH_SHORT).show()
-                                }
-                                return@launch
-                            }
-                        } else {
-                            val actualSettings = File(
-                                context.filesDir,
-                                "datastore/$SETTINGS_FILENAME",
-                            )
-                            tempSettings.copyTo(actualSettings, overwrite = true)
-                        }
-                    }
-
                     context.filesDir.resolve(PERSISTENT_QUEUE_FILE).delete()
                     context.filesDir.resolve(PERSISTENT_AUTOMIX_FILE).delete()
                     context.filesDir.resolve(PERSISTENT_PLAYER_STATE_FILE).delete()
@@ -347,46 +299,7 @@ class BackupRestoreViewModel @Inject constructor(
         }
     }
 
-    fun previewBackup(context: Context, uri: Uri): BackupPreviewInfo {
-        return runCatching {
-            context.applicationContext.contentResolver.openInputStream(uri)?.use { raw ->
-                raw.zipInputStream().use { inputStream ->
-                    var entry = tryOrNull { inputStream.nextEntry }
-                    while (entry != null) {
-                        if (entry.name == SETTINGS_FILENAME) {
-                            val bytes = inputStream.readBytes()
-                            val content = bytes.decodeToString(throwOnInvalidSequence = false)
-
-                            // Check for auth data (SAPISID cookie indicates logged in)
-                            val hasAuthData = content.contains("SAPISID=")
-
-                            // Extract cookie string from backup
-                            val cookie = if (hasAuthData) {
-                                extractCookieFromPrefs(content)
-                            } else null
-
-                            val accountName = if (hasAuthData) {
-                                extractAccountNameFromPrefs(content) ?: "YouTube Account"
-                            } else null
-
-                            return BackupPreviewInfo(
-                                hasAuthData = hasAuthData,
-                                accountName = accountName,
-                                accountEmail = null,
-                                accountImageUrl = null,
-                                cookie = cookie,
-                            )
-                        }
-                        entry = tryOrNull { inputStream.nextEntry }
-                    }
-                }
-            }
-            BackupPreviewInfo()
-        }.getOrElse {
-            Timber.tag("BACKUP_PREVIEW").e(it, "Failed to preview backup")
-            BackupPreviewInfo()
-        }
-    }
+    fun previewBackup(context: Context, uri: Uri): BackupPreviewInfo = BackupPreviewInfo()
 
     private fun extractAccountNameFromPrefs(content: String): String? {
         val sessionPattern = Regex("""(?:SESSION_INDEX|sessionIndex|session)_?\s*["':]*\s*(\d+)""")

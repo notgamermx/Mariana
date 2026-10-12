@@ -39,13 +39,20 @@ sealed class Screens(
     )
 
     object Library : Screens(
-        titleId = R.string.filter_library,
+        titleId = R.string.app_name,
         iconIdInactive = R.drawable.library_music_outlined,
         iconIdActive = R.drawable.library_music_filled,
         route = "library"
     )
 
+    object Settings : Screens(
+        titleId = R.string.settings,
+        iconIdInactive = R.drawable.settings,
+        iconIdActive = R.drawable.settings,
+        route = "settings"
+    )
+
     companion object {
-        val MainScreens = listOf(Home, Search, ListenTogether, Library)
+        val MainScreens = listOf(Home, Search, ListenTogether, Library, Settings)
     }
 }

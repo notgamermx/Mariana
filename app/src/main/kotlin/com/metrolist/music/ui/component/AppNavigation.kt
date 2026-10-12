@@ -8,6 +8,20 @@ package com.metrolist.music.ui.component
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -145,9 +159,15 @@ fun AppNavigationBar(
     val viewConfiguration = LocalViewConfiguration.current
 
     NavigationBar(
-        modifier = modifier,
+        modifier = modifier
+            .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+            .shadow(16.dp, RoundedCornerShape(40.dp))
+            .clip(RoundedCornerShape(40.dp)),
         containerColor = containerColor,
-        contentColor = contentColor
+        contentColor = contentColor,
+        windowInsets = WindowInsets(0),
+        tonalElevation = 0.dp,
     ) {
         navigationItems.forEach { screen ->
             val isSelected = remember(currentRoute, screen.route) {
@@ -190,6 +210,9 @@ fun AppNavigationBar(
 
             NavigationBarItem(
                 selected = isSelected,
+                colors = NavigationBarItemDefaults.colors(indicatorColor = Color.Transparent,
+                    selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant),
                 onClick = {
                     if (!isSearchItem && !isHomeHoldItem) {
                         onItemClick(screen, currentIsSelected)
@@ -200,7 +223,10 @@ fun AppNavigationBar(
                 icon = {
                     Icon(
                         painter = painterResource(id = iconRes),
-                        contentDescription = stringResource(screen.titleId)
+                        contentDescription = stringResource(screen.titleId),
+                        modifier = Modifier.size(44.dp)
+                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
+                            .padding(11.dp),
                     )
                 },
                 label = if (!slimNav) {

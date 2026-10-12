@@ -7,6 +7,8 @@ package com.metrolist.music
 
 import android.app.ActivityManager
 import android.app.Application
+import androidx.datastore.preferences.core.edit
+import com.metrolist.music.utils.applyMyMusicDesign
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -88,7 +90,8 @@ class App :
         }
 
         // Plant logging before extraction services initialize.
-        Timber.plant(Timber.DebugTree())
+        if (BuildConfig.DEBUG) Timber.plant(Timber.DebugTree())
+        applicationScope.launch(Dispatchers.IO) { dataStore.edit { applyMyMusicDesign(it) } }
         InnerTubeXPlayer.initialize(this)
 
         // Pre-read Coil cache size on background to avoid runBlocking in newImageLoader
